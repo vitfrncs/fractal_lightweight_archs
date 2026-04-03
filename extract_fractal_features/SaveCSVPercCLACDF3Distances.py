@@ -7,7 +7,7 @@ from util import reorganizar_e_expandir_df, reorganizar_e_expandir_csv2, gerar_d
 
 
 from ScriptLACDF3Distances import scriptLACDF3Distances 
-from ScriptPercLACDF3Distances import scriptPercLACDF3Distances
+from ScriptPerc import scriptPerc
 
 
 def saveCSVPercCLACDF3Distances(origem, destino, All_FEATURES=True):
@@ -18,7 +18,7 @@ def saveCSVPercCLACDF3Distances(origem, destino, All_FEATURES=True):
 
     if All_FEATURES: 
         print('==== Calculando PERC, LAC e DF ====')
-        resultado_perc = scriptPercLACDF3Distances(origem)
+        resultado_perc = scriptPerc(origem)
         resultado_LACDF = scriptLACDF3Distances(origem)
         
         resultado = []

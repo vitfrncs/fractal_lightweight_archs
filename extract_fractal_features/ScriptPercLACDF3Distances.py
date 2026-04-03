@@ -5,9 +5,16 @@ from PIL import Image
 import numpy as np
 import pandas as pd
 
-from clustperc import clustperc, clustperc_jit
-from clustpercEucl import clustpercEucl, clustpercEucl_jit
-from clustpercManh import clustpercManh, clustpercManh_jit
+from extract_fractal_features.clustperc import clustperc, clustperc_jit
+from extract_fractal_features.clustpercEucl import clustpercEucl, clustpercEucl_jit
+from extract_fractal_features.clustpercManh import clustpercManh, clustpercManh_jit
+from extract_fractal_features.lacunaridade import lacunaridade
+from extract_fractal_features.N import N
+from extract_fractal_features.pmr import pmr
+from extract_fractal_features.pmrEucl import pmrEucl
+from extract_fractal_features.pmrManh import pmrManh
+from scipy.stats import skew
+from sklearn.linear_model import HuberRegressor
 
 def scriptPercLACDF3Distances(diretorio_org):
     '''
@@ -26,18 +33,11 @@ def scriptPercLACDF3Distances(diretorio_org):
 
     imagens = glob.glob(padrao_png) + glob.glob(padrao_tif) + glob.glob(padrao_jpg)
 
-    df = pd.DataFrame({
-        "nome_original": imagens,
-        "nome_recplot": [f"{i}.png" for i in range(1, len(imagens) + 1)]
-    })
-
-    df.to_csv("mapeamento_pulmao/aca.csv", index=False)
-
     lista_de_resultados = []
 
     nome_da_classe = os.path.basename(diretorio_org)
-    print(f'{len(imagens)} encontradas')
-    print('Coletando características Fractais de Percolaçãodas da pasta - ', nome_da_classe )
+    print(f'{len(imagens)} imagens encontradas')
+    print('Coletando Descritores fractais das imagens da pasta - ', nome_da_classe )
 
     for n, caminho in enumerate(imagens):
 
@@ -52,7 +52,76 @@ def scriptPercLACDF3Distances(diretorio_org):
         Manh_perc = clustpercManh_jit(PIC, maxr)
         
         resultado_parc = {**Minsk_perc, **Eucl_perc, **Manh_perc}
+
+        # --- LAC and DF (following ScriptLACDF3Distances.py) ---
+        print(f"Calculando DF e LAC Minkowski {n+1} / {len(imagens)}")
+
+        # Minkowski (Chessboard)
+        MatrizProb = pmr(PIC, maxr)
+        MinkLAC = lacunaridade(MatrizProb)
+        resultado_parc['MinkLAC'] = MinkLAC
+        r = list(range(3, maxr + 1, 2))
+        resultado_parc['MinkAreaLAC'] = np.trapz(MinkLAC)
+        resultado_parc['MinkSkewnessLAC'] = skew(MinkLAC)
+        half = int( np.ceil(len(MinkLAC)/2) )
+        resultado_parc['MinkAreaRatioLAC'] = np.trapz(MinkLAC[half:]) / np.trapz(MinkLAC[:half])
+        resultado_parc['MinkMaxLAC'], resultado_parc['MinkMaxLACIndex'] = np.max(MinkLAC), np.argmax(MinkLAC)
+        Minknn = N(MatrizProb)
+        resultado_parc['Minknn'] = Minknn
+        x = np.log(r)
+        y = -np.log(Minknn)
+        X = x.reshape(-1, 1)
+        modelo = HuberRegressor()
+        modelo.fit(X,y)
+        resultado_parc['MinkDF'] = modelo.coef_[0]
+
+        # Euclidean
+        print(f"Calculando DF e LAC Euclidean {n+1} / {len(imagens)}")
+        MatrizProb = pmrEucl(PIC, maxr)
+        EuclLAC = lacunaridade(MatrizProb)
+        resultado_parc['EuclLAC'] = EuclLAC
+        r = list(range(3, maxr+1, 2))
+        resultado_parc['EuclAreaLAC'] = np.trapz(EuclLAC)
+        resultado_parc['EuclSkewnessLAC'] = skew(EuclLAC)
+        half = int( np.ceil(len(EuclLAC)/2) )
+        resultado_parc['EuclAreaRatioLAC'] = np.trapz(EuclLAC[half:]) / np.trapz(EuclLAC[:half])
+        resultado_parc['EuclMaxLAC'], resultado_parc['EuclMaxLACIndex'] = np.max(EuclLAC), np.argmax(EuclLAC)
+        Euclnn = N(MatrizProb)
+        resultado_parc['Euclnn'] = Euclnn
+        x = np.log(r)
+        y = -np.log(Euclnn)
+        X = x.reshape(-1, 1)
+        modelo = HuberRegressor()
+        modelo.fit(X,y)
+        resultado_parc['EuclDF'] = modelo.coef_[0]
+
+        # Manhattan
+        print(f"Calculando DF e LAC Manhattan {n+1} / {len(imagens)}")
+        MatrizProb = pmrManh(PIC, maxr)
+        ManhLAC = lacunaridade(MatrizProb)
+        resultado_parc['ManhLAC'] = ManhLAC
+        r = list(range(3, maxr+1, 2))
+        resultado_parc['ManhAreaLAC'] = np.trapz(ManhLAC)
+        resultado_parc['ManhSkewnessLAC'] = skew(ManhLAC)
+        half = int( np.ceil(len(ManhLAC)/2) )
+        resultado_parc['ManhAreaRatioLAC'] = np.trapz(ManhLAC[half:]) / np.trapz(ManhLAC[:half])
+        resultado_parc['ManhMaxLAC'], resultado_parc['ManhMaxLACIndex'] = np.max(ManhLAC), np.argmax(ManhLAC)
+        Manhnn = N(MatrizProb)
+        resultado_parc['Manhnn'] = Manhnn
+        x = np.log(r)
+        y = -np.log(Manhnn)
+        X = x.reshape(-1, 1)
+        modelo = HuberRegressor()
+        modelo.fit(X,y)
+        resultado_parc['ManhDF'] = modelo.coef_[0]
+
         lista_de_resultados.append(resultado_parc)
+
         
-    return lista_de_resultados
+    # retornar como DataFrame com todas as colunas (cada campo é uma coluna);
+    try:
+        df = pd.DataFrame(lista_de_resultados)
+        return df
+    except Exception:
+        return lista_de_resultados
 
