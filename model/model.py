@@ -1,43 +1,56 @@
+"""
+Transformei em uma factory pra facilitar a adição de outros modelos.
+
+Para adicionar outra arquitetura:
+ -Criar arquivo em architectures com criar_nomeDaArc
+ -Exportar no init de architectures
+ -Mudar o registro desse arquivo aqui
+"""
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
+import torch
 import torch.nn as nn
+from utils import DEVICE
+from architectures import (
+    criar_mobilenet,
+    criar_efficientnet_b0,
+    criar_ghostnet,
+)
 
-from utils import *
+# Registro de backbones ──────────────────────────────────────────
+REGISTRO: dict = {
+    "mobilenet":       criar_mobilenet,
+    "efficientnet_b0": criar_efficientnet_b0,
+    "ghostnet":        criar_ghostnet,
+}
 
-def criar_modelo(backbone: str, num_classes: int, pretrained=True):
-    backbone = backbone.lower()
-
-    if backbone == "mobilenet":
-        model = models.mobilenet_v2(pretrained=pretrained)
-        model.classifier[1] = nn.Linear(
-            model.classifier[1].in_features, num_classes
+def criar_modelo(backbone, num_classes, pretrained = True):
+    """Instancia o modelo pelo nome do backbone. 
+    Retorna o modelo. 
+    """
+    key = backbone.lower()
+    if key not in REGISTRO:
+        opcoes = ", ".join(REGISTRO.keys())
+        raise ValueError(
+            f"Backbone '{backbone}' não encontrado. Opções: {opcoes}"
         )
+    return REGISTRO[key](num_classes=num_classes, pretrained=pretrained)
 
-    elif backbone == "efficientnet_b0":
-        model = models.efficientnet_b0(pretrained=pretrained)
-        model.classifier[1] = nn.Linear(
-            model.classifier[1].in_features, num_classes
-        )
-
-    else:
-        raise ValueError("backbone deve ser 'mobilenet' ou 'efficientnet_b0'")
-
-    return model
 
 
 def carregar_modelo(backbone, num_classes, path_weights):
+    """Reconstroi modelo e carrega pesos salvos."""
     print(f"Carregando {backbone} de {path_weights}...")
-    backbone = backbone.lower()
-    if backbone == "mobilenet":
-        model = models.mobilenet_v2(pretrained=False)
-        model.classifier[1] = nn.Linear(model.classifier[1].in_features, num_classes)
-    elif backbone == "efficientnet_b0":
-        model = models.efficientnet_b0(pretrained=False)
-        model.classifier[1] = nn.Linear(model.classifier[1].in_features, num_classes)
-
+    model = criar_modelo(backbone=backbone, num_classes=num_classes, pretrained=False)
+ 
     # Carrega os pesos treinados
     try:
-        model.load_state_dict(torch.load(path_weights, map_location=DEVICE))
+        state = torch.load(path_weights, map_location=DEVICE)
+        model.load_state_dict(state)
     except FileNotFoundError:
-        print(f"ERRO: Arquivo {path_weights} não encontrado! Treine o modelo antes.")
+        print(f"ERRO: Arquivo '{path_weights}' não encontrado. Treine o modelo antes.")
         return None
 
     model.to(DEVICE)

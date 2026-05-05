@@ -1,19 +1,28 @@
 from model import criar_modelo
 
-EPOCHS = 30
-SEED = 42
-
 import torch.nn as nn
 import torch.optim as optim
 import torch
 import torchvision.models as models
 import os
 import pandas as pd
+import time
 
 from dataset import load_data_from_folders, ImageDataset
 from sklearn.model_selection import StratifiedKFold
 from utils import *
 from torch.utils.data import DataLoader
+
+EPOCHS = 30
+SEED = 42
+
+# Registro: backbone → chaves no dicionário results 
+# Para adicionar um novo backbone, inclua uma linha aqui.
+BACKBONE_REGISTRO = [
+    ("mobilenet",       "mobnet_orig",     "mobnet_recplot"),
+    ("efficientnet_b0", "effnet_orig",     "effnet_recplot"),
+    ("ghostnet",        "ghostnet_orig",   "ghostnet_recplot"),
+]
 
 
 def train_one_fold(model, train_loader, val_loader, epochs=EPOCHS):
@@ -36,10 +45,12 @@ def train_one_fold(model, train_loader, val_loader, epochs=EPOCHS):
         "best_val_loss": float("inf"),
         "best_val_accuracy": -1,
         "best_train_loss": float("inf"),
-        "best_train_accuracy": -1
+        "best_train_accuracy": -1,
+        "train_time_seconds":  0.0,
     }
 
     best_model_state = None
+    start_time = time.time()
 
     for epoch in range(epochs):
         # ================= TREINO =================
@@ -88,11 +99,11 @@ def train_one_fold(model, train_loader, val_loader, epochs=EPOCHS):
         # ================= MELHOR MODELO =================
         if val_loss < metrics["best_val_loss"]:
             metrics["best_val_loss"] = val_loss
-            best_model_state = model.state_dict()
-            metrics["best_epoch"] = epoch+1
+            metrics["best_epoch"] = epoch + 1
             metrics["best_val_accuracy"] = val_acc
             metrics["best_train_loss"] = train_loss
             metrics["best_train_accuracy"] = train_acc
+            best_model_state = model.state_dict()
 
         print(
             f"Época {epoch+1}/{epochs} | "
@@ -100,10 +111,12 @@ def train_one_fold(model, train_loader, val_loader, epochs=EPOCHS):
             f"ValLoss {val_loss:.4f} | ValAcc {val_acc:.4f}"
         )
 
+    metrics["train_time_seconds"] = time.time() - start_time
     return model, best_model_state, history, metrics
 
+# K-Fold para um backbone/dataset_type 
 def run_kfold(dataset_path, dataset_type, class_names, backbone="mobilenet", seed=SEED):
-
+    """Executa K-Fold e salva o melhor modelo global."""
     os.makedirs(f"models/{seed}", exist_ok=True)
 
     data_list = load_data_from_folders(dataset_path, class_names, dataset_type)
@@ -158,7 +171,9 @@ def run_kfold(dataset_path, dataset_type, class_names, backbone="mobilenet", see
             best_val_loss_global = metrics["best_val_loss"]
             best_model_state = best_model_fold_state
 
-            nome_modelo = f"models/{seed}/{backbone}_{dataset_type}.pth"
+            out_dir = f"../outputs/models/{seed}"
+            os.makedirs(out_dir, exist_ok=True)
+            nome_modelo = f"{out_dir}/{backbone}_{dataset_type}.pth"
             torch.save(best_model_state, nome_modelo)
             print(f"   -> Novo melhor modelo salvo! ValLoss: {best_val_loss_global:.4f}")
 
@@ -178,7 +193,7 @@ def run_kfold(dataset_path, dataset_type, class_names, backbone="mobilenet", see
         torch.cuda.empty_cache()
 
     # ================= SALVAR RESULTADOS =================
-    base_path = f"results_kfold/{seed}/{dataset_type}/{backbone}"
+    base_path = f"../outputs/results_kfold/{seed}/{dataset_type}/{backbone}"
     os.makedirs(base_path, exist_ok=True)
 
     # métricas finais por fold
@@ -205,36 +220,57 @@ def run_kfold(dataset_path, dataset_type, class_names, backbone="mobilenet", see
     return best_model
 
 
-def train_seeds(seeds, dataset_path, classes):
+def train_seeds(seeds, dataset_path, classes, backbones=None, skip_existing=True):
+    """Treina backbones × dataset_types para cada seed.
+
+    Mudanças:
+        - backbones: Lista de backbones a treinar.
+            Se = None, treina todos os registrados em BACKBONE_REGISTRO.
+        - skip_existing: Se True, pula combinações cujo .pth já existe em disco.
+
+        Para terinar só uma rede, por exemplo: backbones=['ghostnet']
+    """
+
+    # filtra quais backbones rodar
+    if backbones is not None:
+        backbones_lower = [b.lower() for b in backbones] # lowercase
+        registro_ativo = [
+            entry for entry in BACKBONE_REGISTRO
+            if entry[0] in backbones_lower
+        ]
+        nao_encontrados = set(backbones_lower) - {e[0] for e in BACKBONE_REGISTRO}
+        if nao_encontrados:
+            raise ValueError(
+                f"Backbones não registrados: {nao_encontrados}. "
+                f"Registre-os em BACKBONE_REGISTRY antes de treinar."
+            )
+    else:
+        registro_ativo = BACKBONE_REGISTRO
+
+    results = {}
+    
     for seed in seeds:
         print(f"\n===== Treinando com seed {seed} =====")
         set_seed(seed)
-
-        results = {}
         results[seed] = {}
 
-        # MobileNet - F-RecPlot
-        results[seed]['mobnet_recplot'] = run_kfold(
-            dataset_path, "F-RecPlot", classes, backbone="mobilenet", seed=seed
-        )
-        torch.cuda.empty_cache()
-
-        # EfficientNet-B0 - F-RecPlot
-        results[seed]['effnet_recplot'] = run_kfold(
-            dataset_path, "F-RecPlot", classes, backbone="efficientnet_b0", seed=seed
-        )
-        torch.cuda.empty_cache()
-
-        # MobileNet - originais
-        results[seed]['mobnet_orig'] = run_kfold(
-            dataset_path, "originais", classes, backbone="mobilenet", seed=seed
-        )
-        torch.cuda.empty_cache()
-
-        # EfficientNet-B0 - originais
-        results[seed]['effnet_orig'] = run_kfold(
-            dataset_path, "originais", classes, backbone="efficientnet_b0", seed=seed
-        )
-        torch.cuda.empty_cache()
-
+        for backbone, chave_orig, chave_rec in registro_ativo:
+ 
+            for dataset_type, chave in [("F-RecPlot", chave_rec),
+                                         ("originais",  chave_orig)]:
+ 
+                pth = f"../outputs/models/{seed}/{backbone}_{dataset_type}.pth"
+ 
+                if skip_existing and os.path.exists(pth):
+                    print(f"\n[SKIP] {backbone} / {dataset_type} / seed {seed} "
+                          f"— pesos já existem em {pth}")
+                    results[seed][chave] = None   # será carregado depois no run.py
+                    continue
+ 
+                results[seed][chave] = run_kfold(
+                    dataset_path, dataset_type, classes,
+                    backbone=backbone, seed=seed,
+                )
+                torch.cuda.empty_cache()
+ 
     return results

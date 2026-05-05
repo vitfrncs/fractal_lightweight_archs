@@ -1,0 +1,236 @@
+# Como adicionar uma nova arquitetura
+
+Ao adicionar um novo backbone, **5 arquivos** precisam ser atualizados.  
+Siga os passos na ordem — cada um depende do anterior.
+
+---
+
+## Passo 1 — `architectures/nova_arch.py` (arquivo novo)
+
+Crie um arquivo para a arquitetura. O padrão é uma função `criar_<nome>` que recebe `num_classes` e `pretrained` e devolve o modelo com a cabeça classificadora substituída.
+
+```python
+# architectures/resnet50.py  ← exemplo com ResNet-50
+import torch.nn as nn
+import torchvision.models as models
+
+def criar_resnet50(num_classes: int, pretrained: bool = True) -> nn.Module:
+    model = models.resnet50(pretrained=pretrained)
+    model.fc = nn.Linear(model.fc.in_features, num_classes)
+    return model
+```
+
+> **Dica:** para descobrir o nome da camada de saída, rode `print(model)` e olhe a última camada — em ResNets é `fc`, em MobileNet/EfficientNet é `classifier[1]`, em GhostNet (timm) é `classifier`.
+
+---
+
+## Passo 2 — `architectures/__init__.py`
+
+Exporte a nova função para que os outros módulos consigam importá-la.
+
+```python
+from .mobilenet import criar_mobilenet
+from .efficientnet import criar_efficientnet_b0
+from .ghostnet import criar_ghostnet
+from .resnet50 import criar_resnet50          # ← adicionar
+
+__all__ = [
+    "criar_mobilenet",
+    "criar_efficientnet_b0",
+    "criar_ghostnet",
+    "criar_resnet50",                         # ← adicionar
+]
+```
+
+---
+
+## Passo 3 — `model/model.py`
+
+Registre o backbone no dicionário `REGISTRO`. É aqui que o nome em string (usado em todo o projeto) é mapeado para a função construtora.
+
+```python
+from architectures import (
+    criar_mobilenet,
+    criar_efficientnet_b0,
+    criar_ghostnet,
+    criar_resnet50,          # ← adicionar import
+)
+
+REGISTRO: dict = {
+    "mobilenet":       criar_mobilenet,
+    "efficientnet_b0": criar_efficientnet_b0,
+    "ghostnet":        criar_ghostnet,
+    "resnet50":        criar_resnet50,         # ← adicionar entrada
+}
+```
+
+---
+
+## Passo 4 — `model/train.py`
+
+Adicione uma linha no `BACKBONE_REGISTRO`. O formato é:  
+`("nome_backbone", "chave_originais", "chave_recplot")`
+
+As chaves são os nomes que identificam o modelo dentro do dicionário `results` durante o treinamento e avaliação.
+
+```python
+BACKBONE_REGISTRO = [
+    ("mobilenet",       "mobnet_orig",     "mobnet_recplot"),
+    ("efficientnet_b0", "effnet_orig",     "effnet_recplot"),
+    ("ghostnet",        "ghostnet_orig",   "ghostnet_recplot"),
+    ("resnet50",        "resnet50_orig",   "resnet50_recplot"),   # ← adicionar
+]
+```
+
+---
+
+## Passo 5 — `model/metrics.py`
+
+Este é o arquivo com mais linhas para atualizar. São 4 locais dentro da função `metrics_to_csv`:
+
+### 5a — Lista de cenários de ensemble
+
+Adicione todos os pares envolvendo a nova arquitetura. Para uma arquitetura nova `X`, os novos pares são: `X_Original` com cada modelo já existente (orig e rec), `X_RecPlot` com cada modelo já existente, e o par `X_Original + X_RecPlot`. Os pares "baseline" (modelo sozinho) também precisam ser incluídos.
+
+```python
+cenarios = [
+    # ... pares existentes ...
+
+    # pares com ResNet50
+    ("MobileNet_Original",  "ResNet50_Original"),
+    ("MobileNet_Original",  "ResNet50_RecPlot"),
+    ("MobileNet_RecPlot",   "ResNet50_Original"),
+    ("MobileNet_RecPlot",   "ResNet50_RecPlot"),
+    ("EffNet_Original",     "ResNet50_Original"),
+    ("EffNet_Original",     "ResNet50_RecPlot"),
+    ("EffNet_RecPlot",      "ResNet50_Original"),
+    ("EffNet_RecPlot",      "ResNet50_RecPlot"),
+    ("GhostNet_Original",   "ResNet50_Original"),
+    ("GhostNet_Original",   "ResNet50_RecPlot"),
+    ("GhostNet_RecPlot",    "ResNet50_Original"),
+    ("GhostNet_RecPlot",    "ResNet50_RecPlot"),
+    ("ResNet50_Original",   "ResNet50_RecPlot"),   # ← par interno
+
+    # baselines
+    ("ResNet50_Original",   "ResNet50_Original"),
+    ("ResNet50_RecPlot",    "ResNet50_RecPlot"),
+]
+```
+
+### 5b — `model_input`: tipo de entrada por modelo
+
+```python
+model_input = {
+    # ... entradas existentes ...
+    "ResNet50_Original":   "orig",    # ← adicionar
+    "ResNet50_RecPlot":    "rec",     # ← adicionar
+}
+```
+
+### 5c — `modelos`: carregamento por seed
+
+```python
+modelos = {
+    # ... modelos existentes ...
+    "ResNet50_Original":   results[seed].get('resnet50_orig'),     # ← adicionar
+    "ResNet50_RecPlot":    results[seed].get('resnet50_recplot'),  # ← adicionar
+}
+```
+
+---
+
+## Passo 6 — `model/save_outputs.py`
+
+Adicione as duas entradas (originais e F-RecPlot) na lista `config` dentro de `salvar_saidas_todos`.
+
+```python
+config = [
+    # ... entradas existentes ...
+    ("resnet50_orig",     "resnet50", "originais"),   # ← adicionar
+    ("resnet50_recplot",  "resnet50", "F-RecPlot"),   # ← adicionar
+]
+```
+
+---
+
+## Passo 7 — `model/gradcam.py`
+
+Adicione um `elif` em `_get_target_layer` com a camada convolucional final do novo backbone.  
+Para descobrir o nome correto, rode `print(model)` e identifique a última `Conv2d` antes do pooling global.
+
+```python
+def _get_target_layer(model, backbone: str):
+    backbone = backbone.lower()
+
+    if backbone == "mobilenet":
+        return [model.features[-1][0]]
+    elif backbone == "efficientnet_b0":
+        return [model.features[-1][0]]
+    elif backbone == "ghostnet":
+        return [model.conv_head]
+    elif backbone == "resnet50":
+        return [model.layer4[-1].conv3]     # ← adicionar
+    else:
+        raise ValueError(...)
+```
+
+---
+
+## Passo 8 — `model/run.py`
+
+Três locais para atualizar:
+
+### 8a — Treinar o novo backbone
+
+```python
+results = train_seeds(
+    seeds        = SEEDS,
+    dataset_path = dataset_path,
+    classes      = classes,
+    backbones    = ['resnet50'],   # ← nome registrado no BACKBONE_REGISTRO
+    skip_existing= True,
+)
+```
+
+### 8b — Carregar os pesos após o treino
+
+```python
+for seed in SEEDS:
+    # ... carregamentos existentes ...
+    results[seed]['resnet50_orig']     = carregar_modelo('resnet50', num_classes, f"../outputs/models/{seed}/resnet50_originais.pth")    # ← adicionar
+    results[seed]['resnet50_recplot']  = carregar_modelo('resnet50', num_classes, f"../outputs/models/{seed}/resnet50_F-RecPlot.pth")    # ← adicionar
+```
+
+### 8c — Grad-CAM e eficiência (opcional, mas recomendado)
+
+```python
+# Grad-CAM
+for chave, backbone in [
+    # ... backbones existentes ...
+    ("resnet50_orig", "resnet50"),    # ← adicionar
+]:
+    ...
+
+# Eficiência
+tabela_eficiencia(modelos={
+    # ... modelos existentes ...
+    "resnet50": results[seed_ref]['resnet50_orig'],   # ← adicionar
+})
+```
+
+---
+
+## Checklist resumido
+
+| # | Arquivo | O que fazer |
+|---|---------|-------------|
+| 1 | `architectures/resnet50.py` | Criar arquivo com `criar_resnet50()` |
+| 2 | `architectures/__init__.py` | Exportar `criar_resnet50` |
+| 3 | `model/model.py` | Importar e registrar `"resnet50"` no `REGISTRO` |
+| 4 | `model/train.py` | Adicionar linha no `BACKBONE_REGISTRO` |
+| 5 | `model/metrics.py` | Adicionar cenários, `model_input` e `modelos` |
+| 6 | `model/save_outputs.py` | Adicionar 2 entradas no `config` |
+| 7 | `model/gradcam.py` | Adicionar `elif` em `_get_target_layer` |
+| 8 | `model/run.py` | Atualizar treino, carregamento, grad-cam e eficiência |
+
+> **Nota sobre nomes:** o nome em string usado nos passos 3, 4, 6, 7 e 8 deve ser sempre o mesmo — no exemplo acima, `"resnet50"`. O nome de exibição nos cenários do `metrics.py` (ex: `"ResNet50_Original"`) é livre, mas mantenha um padrão consistente com os demais.
