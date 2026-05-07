@@ -1,6 +1,8 @@
 from torch.utils.data import Dataset
 from pathlib import Path
 from PIL import Image
+from torchvision import transforms
+
 
 def load_data_from_folders(dir_data, class_names, reshape_type):
     data_list = []
@@ -21,16 +23,20 @@ class ImageDataset(Dataset):
     def __init__(self, data_list, transform=None):
         self.data = data_list
         self.transform = transform
+        self.to_tensor = transforms.ToTensor()  # <- sem normalize
 
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, idx):
         img_path, label = self.data[idx]
+
         image = Image.open(img_path).convert('RGB')
-        if self.transform:
-            image = self.transform(image)
-        return image, label
+
+        img_vis = self.to_tensor(image)     # pra visualização
+        img_model = self.transform(image)   # pro modelo
+
+        return img_model, img_vis, label
 
 class EnsembleTestDataset(Dataset):
     def __init__(self, root_dir, class_names, transform=None):
