@@ -115,7 +115,7 @@ def train_one_fold(model, train_loader, val_loader, epochs=EPOCHS):
     return model, best_model_state, history, metrics
 
 # K-Fold para um backbone/dataset_type 
-def run_kfold(dataset_path, dataset_type, class_names, backbone="mobilenet", seed=SEED):
+def run_kfold(dataset_path, dataset_type, class_names, dataset_nome, backbone="mobilenet", seed=SEED):
     """Executa K-Fold e salva o melhor modelo global."""
     os.makedirs(f"models/{seed}", exist_ok=True)
 
@@ -171,7 +171,7 @@ def run_kfold(dataset_path, dataset_type, class_names, backbone="mobilenet", see
             best_val_loss_global = metrics["best_val_loss"]
             best_model_state = best_model_fold_state
 
-            out_dir = f"../outputs/models/{seed}"
+            out_dir = f"../outputs/models/{dataset_nome}/{seed}"
             os.makedirs(out_dir, exist_ok=True)
             nome_modelo = f"{out_dir}/{backbone}_{dataset_type}.pth"
             torch.save(best_model_state, nome_modelo)
@@ -193,7 +193,7 @@ def run_kfold(dataset_path, dataset_type, class_names, backbone="mobilenet", see
         torch.cuda.empty_cache()
 
     # ================= SALVAR RESULTADOS =================
-    base_path = f"../outputs/results_kfold/{seed}/{dataset_type}/{backbone}"
+    base_path = f"../outputs/results_kfold/{dataset_nome}/{seed}/{dataset_type}/{backbone}" 
     os.makedirs(base_path, exist_ok=True)
 
     # métricas finais por fold
@@ -220,7 +220,7 @@ def run_kfold(dataset_path, dataset_type, class_names, backbone="mobilenet", see
     return best_model
 
 
-def train_seeds(seeds, dataset_path, classes, backbones=None, skip_existing=True):
+def train_seeds(seeds, dataset_path, classes,  dataset_nome, backbones=None, skip_existing=True):
     """Treina backbones × dataset_types para cada seed.
 
     Mudanças:
@@ -259,7 +259,7 @@ def train_seeds(seeds, dataset_path, classes, backbones=None, skip_existing=True
             for dataset_type, chave in [("F-RecPlot", chave_rec),
                                          ("originais",  chave_orig)]:
  
-                pth = f"../outputs/models/{seed}/{backbone}_{dataset_type}.pth"
+                pth = f"../outputs/models/{dataset_nome}/{seed}/{backbone}_{dataset_type}.pth"
  
                 if skip_existing and os.path.exists(pth):
                     print(f"\n[SKIP] {backbone} / {dataset_type} / seed {seed} "
@@ -269,6 +269,7 @@ def train_seeds(seeds, dataset_path, classes, backbones=None, skip_existing=True
  
                 results[seed][chave] = run_kfold(
                     dataset_path, dataset_type, classes,
+                    dataset_nome=dataset_nome,
                     backbone=backbone, seed=seed,
                 )
                 torch.cuda.empty_cache()
