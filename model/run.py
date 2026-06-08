@@ -100,6 +100,8 @@ for ds in DATASETS:
     seed_ref = SEEDS[0]
  
     for chave_orig, chave_rec, backbone in [
+        ("mobnet_orig", "mobnet_recplot", "mobnet"),
+        ("effnet_orig", "effnet_recplot", "effnet"),
         ("ghostnet_orig", "ghostnet_recplot", "ghostnet"),
         ("convnext_orig", "convnext_recplot", "convnextv2"), # <-- Inclusão do pipeline Grad-CAM
     ]:
@@ -139,6 +141,7 @@ for ds in DATASETS:
             ("mobilenet",       "mobnet_orig"),
             ("efficientnet_b0", "effnet_orig"),
             ("ghostnet",        "ghostnet_orig"),
+            ("convnext",        "convnext_orig"),
         ]
         if results[seed_ref].get(chave) is not None
     }
@@ -146,4 +149,4 @@ for ds in DATASETS:
     if modelos_efic:
         tabela_eficiencia(modelos=modelos_efic, csv_path=efic_path)
     else:
-        print(f"[SKIP Eficiência] Nenhum modelo disponível para {nome}")
+        print(f" Nenhum modelo disponível para {nome}")
