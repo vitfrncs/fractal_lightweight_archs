@@ -1,3 +1,4 @@
-entradas_para_testes/
+outputs/
+*.pth
 __pycache__/
-*.pyc
+.venv/
