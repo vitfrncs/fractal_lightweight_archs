@@ -17,41 +17,41 @@ from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
 
 from utils import DEVICE
 
-
-# =========================================================
-# 1. Seleção automática de camada
-# =========================================================
+import torch.nn as nn
 
 def get_target_layers(model):
-    """Seleciona automaticamente uma camada adequada para Grad-CAM,
-    compatível com múltiplas arquiteturas.
+    """Seleciona automaticamente uma camada adequada com base na arquitetura.
     """
-    if hasattr(model, "layer4"):
-        return [model.layer4[-1]]
+    
+    # percorre o grafo dos modelos para achar a última camada convolucional
+    last_conv_name = None
+    last_conv_module = None
+    for name, module in model.named_modules():
+        if isinstance(module, nn.Conv2d):
+            last_conv_name = name
+            last_conv_module = module
 
-    if hasattr(model, "features") and isinstance(model.features, nn.Sequential):
-        return [model.features[-1]]
+    if last_conv_module is not None:
+        return [last_conv_module]
 
-    if hasattr(model, "blocks"):
+    # Fallback para arquiteturas baseadas em transformers 
+    if hasattr(model, "blocks") and len(model.blocks) > 0:
         return [model.blocks[-1]]
 
-    last_conv = None
-    for module in model.modules():
-        if isinstance(module, nn.Conv2d):
-            last_conv = module
-    if last_conv is not None:
-        return [last_conv]
+    # Fallback para modelos com 'features' como container genérico
+    if hasattr(model, "features") and len(list(model.features.children())) > 0:
+        return [model.features[-1]]
 
-    modules = list(model.children())
-    if len(modules) > 1:
-        return [modules[-2]]
+    # 4.Se nenhum dos ifs funcionar, retorna o último submódulo direto do modelo.
+    children = list(model.children())
+    if children:
+        return [children[-1]]
 
-    return [modules[-1]]
+    return [model]
 
 
-# =========================================================
-# 2. Normalização inversa para visualização
-# =========================================================
+
+# Normalização inversa para visualização
 
 _inv_transform = transforms.Compose([
     transforms.Normalize(
@@ -66,9 +66,9 @@ def _tensor_to_rgb(tensor):
     return np.clip(img, 0, 1).astype(np.float32)
 
 
-# =========================================================
-# 3. Wrapper — instancia GradCAM uma vez por modelo
-# =========================================================
+
+#  Wrapper — instancia GradCAM uma vez por modelo
+
 
 class GradCAMWrapper:
     def __init__(self, model):
@@ -97,9 +97,9 @@ class GradCAMWrapper:
         Image.fromarray(overlay).save(save_path)
 
 
-# =========================================================
-# 4. Comparação lado a lado: original vs recplot
-# =========================================================
+
+# Comparação lado a lado: original vs recplot
+
 
 def _add_label(img_array: np.ndarray, text: str, font_size: int = 14) -> Image.Image:
     """Adiciona legenda abaixo da imagem."""
@@ -150,9 +150,9 @@ def _make_comparison(
     return strip
 
 
-# =========================================================
-# 5. Geração em lote — individual
-# =========================================================
+
+# Geração em lote — individual
+
 
 def gerar_gradcam_lote(
     model,
@@ -160,19 +160,14 @@ def gerar_gradcam_lote(
     loader,
     class_names: list,
     split: str = "test",
-    n_por_classe: int = 5,
     base_dir: str = "../outputs/gradcam",
 ):
-    """Gera mapas Grad-CAM individuais para as primeiras N imagens de cada classe."""
+    """Gera mapas Grad-CAM individuais para ABSOLUTAMENTE TODAS as imagens do loader."""
     wrapper    = GradCAMWrapper(model)
     contagem   = {i: 0 for i in range(len(class_names))}
-    total_alvo = n_por_classe * len(class_names)
     gerados    = 0
 
     for batch in loader:
-        if gerados >= total_alvo:
-            break
-
         if len(batch) == 3:
             imgs, _, labels = batch
         else:
@@ -180,8 +175,6 @@ def gerar_gradcam_lote(
 
         for i in range(imgs.size(0)):
             lbl = int(labels[i].item())
-            if contagem[lbl] >= n_por_classe:
-                continue
 
             idx   = contagem[lbl]
             fname = f"{class_names[lbl]}_{idx:03d}.png"
@@ -192,15 +185,12 @@ def gerar_gradcam_lote(
             contagem[lbl] += 1
             gerados        += 1
 
-            if gerados >= total_alvo:
-                break
-
-    print(f"Grad-CAM individual: {gerados} imagens em {base_dir}/{backbone}/{split}/")
+    print(f"Grad-CAM individual completo: {gerados} imagens salvas em {base_dir}/{backbone}/{split}/")
 
 
-# =========================================================
-# 6. Geração em lote — comparação original vs recplot
-# =========================================================
+
+# Geração em lote — comparação original vs recplot
+
 
 def gerar_gradcam_comparacao(
     model_orig,
@@ -209,45 +199,27 @@ def gerar_gradcam_comparacao(
     loader,
     class_names: list,
     split: str = "test",
-    n_por_classe: int = 5,
     base_dir: str = "../outputs/gradcam",
 ):
-    """
-    Gera imagens comparativas lado a lado:
-        Original | GradCAM Original | F-RecPlot | GradCAM F-RecPlot
-
-    Requer EnsembleTestDataset (batch com 3 itens: orig, rec, label).
-    Salva em: base_dir/backbone_comparacao/split/classe/
-    """
+    """Gera imagens comparativas lado a lado para ABSOLUTAMENTE TODAS as imagens do loader."""
     wrapper_orig = GradCAMWrapper(model_orig)
     wrapper_rec  = GradCAMWrapper(model_rec)
 
     contagem   = {i: 0 for i in range(len(class_names))}
-    total_alvo = n_por_classe * len(class_names)
     gerados    = 0
 
     for batch in loader:
-        if gerados >= total_alvo:
-            break
-
         if len(batch) != 3:
-            raise ValueError(
-                "gerar_gradcam_comparacao requer EnsembleTestDataset "
-                "(batch com 3 itens: orig, rec, label)."
-            )
+            raise ValueError("Requer EnsembleTestDataset (batch com 3 itens: orig, rec, label).")
 
         imgs_orig, imgs_rec, labels = batch
 
         for i in range(imgs_orig.size(0)):
             lbl = int(labels[i].item())
-            if contagem[lbl] >= n_por_classe:
-                continue
 
             idx   = contagem[lbl]
             fname = f"{class_names[lbl]}_{idx:03d}.png"
-            path  = os.path.join(
-                base_dir, f"{backbone}_comparacao", split, class_names[lbl], fname
-            )
+            path  = os.path.join(base_dir, f"{backbone}_comparacao", split, class_names[lbl], fname)
             os.makedirs(os.path.dirname(path), exist_ok=True)
 
             comparison = _make_comparison(
@@ -262,8 +234,5 @@ def gerar_gradcam_comparacao(
             contagem[lbl] += 1
             gerados        += 1
 
-            if gerados >= total_alvo:
-                break
-
     out_dir = os.path.join(base_dir, f"{backbone}_comparacao", split)
-    print(f"Grad-CAM comparação: {gerados} imagens em {out_dir}/")
+    print(f"Grad-CAM comparação completa: {gerados} imagens salvas em {out_dir}/")
