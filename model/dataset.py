@@ -20,11 +20,13 @@ def load_data_from_folders(dir_data, class_names, reshape_type):
     return data_list
 
 class ImageDataset(Dataset):
-    def __init__(self, data_list, transform=None):
+    def __init__(self, data_list, transform=None, vis_size=(224, 224)):
         self.data = data_list
         self.transform = transform
-        self.to_tensor = transforms.ToTensor()  # <- sem normalize
-
+        self.to_tensor = transforms.Compose([
+            transforms.Resize(vis_size),
+            transforms.ToTensor(),
+        ])
     def __len__(self):
         return len(self.data)
 
