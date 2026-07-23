@@ -19,7 +19,7 @@ import torch.nn.functional as F
 
 IMG_SIZE = 224
 BATCH_SIZE = 32
-EPOCHS = 30
+EPOCHS = 50
 K_FOLDS = 5
 SEEDS = [7, 12, 42, 65, 87, 93, 107, 121]
 
