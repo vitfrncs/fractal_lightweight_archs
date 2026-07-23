@@ -64,129 +64,116 @@ def salvar_matriz_confusao(y_true, y_pred, class_names, save_path: str):
 
 def metrics_to_csv(seeds, results, test_loader, class_names,
                    csv_path="outputs/resultados_testes.csv", plots_dir="outputs/plots"):
-    """Avalia cenários dos ensembles e salva métricas + matrizes"""
+    """Avalia redes individuais e ensembles de forma otimizada no conjunto de teste."""
     all_results = []
 
-    cenarios = [
+    # 1. Definição clara e única de cada modelo e seu tipo de entrada
+    model_meta = {
+        "MobileNet_Original":  {"key": "mobnet_orig",      "input": "orig"},
+        "MobileNet_RecPlot":   {"key": "mobnet_recplot",   "input": "rec"},
+        "EffNet_Original":     {"key": "effnet_orig",      "input": "orig"},
+        "EffNet_RecPlot":      {"key": "effnet_recplot",   "input": "rec"},
+        "GhostNet_Original":   {"key": "ghostnet_orig",    "input": "orig"},
+        "GhostNet_RecPlot":    {"key": "ghostnet_recplot", "input": "rec"},
+        "ConvNeXtV2_Original": {"key": "convnext_orig",    "input": "orig"},
+        "ConvNeXtV2_RecPlot":  {"key": "convnext_recplot", "input": "rec"},
+    }
+
+    # 2. Definição dos Ensembles Reais (Combinações sem repetição)
+    ensembles_config = [
         ("MobileNet_Original",  "MobileNet_RecPlot"),
         ("MobileNet_Original",  "EffNet_Original"),
         ("MobileNet_Original",  "EffNet_RecPlot"),
         ("MobileNet_Original",  "GhostNet_Original"),
         ("MobileNet_Original",  "GhostNet_RecPlot"),
+        ("MobileNet_Original",  "ConvNeXtV2_Original"),
         ("MobileNet_RecPlot",   "EffNet_Original"),
         ("MobileNet_RecPlot",   "EffNet_RecPlot"),
         ("MobileNet_RecPlot",   "GhostNet_Original"),
         ("MobileNet_RecPlot",   "GhostNet_RecPlot"),
+        ("MobileNet_RecPlot",   "ConvNeXtV2_RecPlot"),
         ("EffNet_Original",     "EffNet_RecPlot"),
         ("EffNet_Original",     "GhostNet_Original"),
         ("EffNet_Original",     "GhostNet_RecPlot"),
+        ("EffNet_Original",     "ConvNeXtV2_Original"),
         ("EffNet_RecPlot",      "GhostNet_Original"),
         ("EffNet_RecPlot",      "GhostNet_RecPlot"),
+        ("EffNet_RecPlot",      "ConvNeXtV2_RecPlot"),
         ("GhostNet_Original",   "GhostNet_RecPlot"),
-        # modelos sozinhos
-        ("MobileNet_Original",  "MobileNet_Original"),
-        ("MobileNet_RecPlot",   "MobileNet_RecPlot"),
-        ("EffNet_Original",     "EffNet_Original"),
-        ("EffNet_RecPlot",      "EffNet_RecPlot"),
-        ("GhostNet_Original",   "GhostNet_Original"),
-        ("GhostNet_RecPlot",    "GhostNet_RecPlot"),
+        ("GhostNet_Original",   "ConvNeXtV2_Original"),
+        ("GhostNet_RecPlot",    "ConvNeXtV2_RecPlot"),
+        ("ConvNeXtV2_Original", "ConvNeXtV2_RecPlot"),
     ]
 
-    model_input = {
-        "MobileNet_Original":  "orig",
-        "MobileNet_RecPlot":   "rec",
-        "EffNet_Original":     "orig",
-        "EffNet_RecPlot":      "rec",
-        "GhostNet_Original":   "orig",
-        "GhostNet_RecPlot":    "rec",
-    }
-
     for seed in seeds:
-        modelos = {
-            "MobileNet_Original":  results[seed].get('mobnet_orig'),
-            "MobileNet_RecPlot":   results[seed].get('mobnet_recplot'),
-            "EffNet_Original":     results[seed].get('effnet_orig'),
-            "EffNet_RecPlot":      results[seed].get('effnet_recplot'),
-            "GhostNet_Original":   results[seed].get('ghostnet_orig'),
-            "GhostNet_RecPlot":    results[seed].get('ghostnet_recplot'),
-        }
+        # Carrega os modelos disponíveis da seed atual usando o metadado
+        modelos_ativos = {}
+        for nome_amigavel, meta in model_meta.items():
+            modelo = results[seed].get(meta["key"])
+            if modelo is not None:
+                modelo.eval()
+                modelos_ativos[nome_amigavel] = modelo
 
-        # Identifica quais modelos estão disponíveis (não-None) para esta seed
-        modelos_disponiveis = {k for k, v in modelos.items() if v is not None}
-        if not modelos_disponiveis:
+        if not modelos_ativos:
             print(f"[SKIP seed {seed}] Nenhum modelo disponível, pulando.")
             continue
 
-        # Filtra apenas cenários onde AMBOS os modelos estão disponíveis
-        cenarios_ativos = [
-            c for c in cenarios
-            if c[0] in modelos_disponiveis and c[1] in modelos_disponiveis
-        ]
-
-        if not cenarios_ativos:
-            print(f"[SKIP seed {seed}] Nenhum cenário válido com os modelos disponíveis.")
-            continue
-
-        print(f"\n[seed {seed}] Modelos disponíveis: {sorted(modelos_disponiveis)}")
-        print(f"[seed {seed}] Cenários ativos: {len(cenarios_ativos)}")
-
-        for model in modelos.values():
-            if model is not None:
-                model.eval()
+        print(f"\n[seed {seed}] Avaliando {len(modelos_ativos)} redes individuais...")
 
         y_true = []
-        preds_cenarios = {c: [] for c in cenarios_ativos}
+        
+        # Dicionários para acumular as predições de cada cenário
+        preds_cenarios = {nome: [] for nome in modelos_ativos.keys()}
+        
+        # Filtra os ensembles onde AMBOS os modelos estão carregados nesta seed
+        ensembles_ativos = [e for e in ensembles_config if e[0] in modelos_ativos and e[1] in modelos_ativos]
+        for ens in ensembles_ativos:
+            nome_ens = f"{ens[0]} + {ens[1]}"
+            preds_cenarios[nome_ens] = []
 
+        # Loop de inferência (Forward único por modelo!)
         with torch.no_grad():
             for imgs_orig, imgs_rec, labels in test_loader:
                 imgs_orig = imgs_orig.to(DEVICE)
                 imgs_rec  = imgs_rec.to(DEVICE)
-
-                # Forward apenas dos modelos disponíveis
-                outputs = {}
-                for name, model in modelos.items():
-                    if model is not None:
-                        img = imgs_orig if model_input[name] == "orig" else imgs_rec
-                        outputs[name] = F.softmax(model(img), dim=1)
-
                 y_true.extend(labels.cpu().numpy())
 
-                for cenario in cenarios_ativos:
-                    # Ambos já foram validados acima, mas checagem defensiva
-                    if cenario[0] not in outputs or cenario[1] not in outputs:
-                        continue
-                    soma = outputs[cenario[0]] + outputs[cenario[1]]
-                    y_pred_batch = torch.argmax(soma, dim=1).cpu().numpy()
-                    preds_cenarios[cenario].extend(y_pred_batch)
+                # Executa o forward APENAS UMA VEZ para cada modelo ativo
+                outputs_softmax = {}
+                for nome_modelo, model in modelos_ativos.items():
+                    img = imgs_orig if model_meta[nome_modelo]["input"] == "orig" else imgs_rec
+                    outputs_softmax[nome_modelo] = F.softmax(model(img), dim=1)
+                    
+                    # Salva predição da rede solo
+                    y_pred_solo = torch.argmax(outputs_softmax[nome_modelo], dim=1).cpu().numpy()
+                    preds_cenarios[nome_modelo].extend(y_pred_solo)
 
-        # Calcula métricas — só para cenários com predições completas
+                # Calcula os Ensembles aproveitando os tensores já computados
+                for ens in ensembles_ativos:
+                    nome_ens = f"{ens[0]} + {ens[1]}"
+                    soma_probabilidades = outputs_softmax[ens[0]] + outputs_softmax[ens[1]]
+                    y_pred_ens = torch.argmax(soma_probabilidades, dim=1).cpu().numpy()
+                    preds_cenarios[nome_ens].extend(y_pred_ens)
+
+        # Calcula as métricas e salva os plots para tudo
         for cenario, y_pred in preds_cenarios.items():
-            if len(y_pred) != len(y_true):
-                print(f"[WARN] Cenário {cenario} com predições incompletas "
-                      f"({len(y_pred)} vs {len(y_true)}), pulando.")
-                continue
-
-            metrics = mostrar_metricas(
-                nome_cenario=" + ".join(cenario),
-                y_true=y_true,
-                y_pred=y_pred,
-            )
+            metrics = mostrar_metricas(nome_cenario=cenario, y_true=y_true, y_pred=y_pred)
             metrics["seed"] = seed
-            metrics["cenario"] = " + ".join(cenario)
+            metrics["cenario"] = cenario
+            
+            # Adiciona uma coluna identificadora para facilitar o agrupamento depois!
+            metrics["tipo_scen"] = "Individual" if " + " not in cenario else "Ensemble"
+            
             all_results.append(metrics)
 
-            fname = f"seed{seed}__{cenario[0]}__{cenario[1]}.png".replace(" ", "_")
-            salvar_matriz_confusao(
-                y_true, y_pred, class_names,
-                save_path=os.path.join(plots_dir, fname),
-            )
+            fname = f"seed{seed}__{cenario.replace(' + ', '__')}.png".replace(" ", "_")
+            salvar_matriz_confusao(y_true, y_pred, class_names, save_path=os.path.join(plots_dir, fname))
 
     if not all_results:
-        print("Nenhum resultado calculado. Verifique se os modelos foram carregados.")
         return pd.DataFrame()
 
     df_results = pd.DataFrame(all_results)
     os.makedirs(os.path.dirname(csv_path), exist_ok=True)
     df_results.to_csv(csv_path, index=False)
-    print(f"\nResultados salvos em {csv_path}")
+    print(f"\nResultados brutos de teste salvos em {csv_path}")
     return df_results
