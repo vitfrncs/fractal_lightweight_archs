@@ -17,6 +17,7 @@ from architectures import (
     criar_mobilenet,
     criar_efficientnet_b0,
     criar_ghostnet,
+    criar_convnextv2
 )
 
 # Registro de backbones ──────────────────────────────────────────
@@ -24,6 +25,7 @@ REGISTRO: dict = {
     "mobilenet":       criar_mobilenet,
     "efficientnet_b0": criar_efficientnet_b0,
     "ghostnet":        criar_ghostnet,
+    "convnextv2":      criar_convnextv2,
 }
 
 def criar_modelo(backbone, num_classes, pretrained = True):
