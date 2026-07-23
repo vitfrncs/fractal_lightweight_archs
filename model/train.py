@@ -7,21 +7,22 @@ import torchvision.models as models
 import os
 import pandas as pd
 import time
+import copy
 
 from dataset import load_data_from_folders, ImageDataset
 from sklearn.model_selection import StratifiedKFold
 from utils import *
 from torch.utils.data import DataLoader
 
-EPOCHS = 30
+EPOCHS = 50
 SEED = 42
 
 # Registro: backbone → chaves no dicionário results 
-# Para adicionar um novo backbone, inclua uma linha aqui.
 BACKBONE_REGISTRO = [
     ("mobilenet",       "mobnet_orig",     "mobnet_recplot"),
     ("efficientnet_b0", "effnet_orig",     "effnet_recplot"),
     ("ghostnet",        "ghostnet_orig",   "ghostnet_recplot"),
+    ("convnextv2",      "convnext_orig",   "convnext_recplot"),
 ]
 
 
@@ -57,7 +58,7 @@ def train_one_fold(model, train_loader, val_loader, epochs=EPOCHS):
         model.train()
         running_loss, correct, total = 0.0, 0, 0
 
-        for inputs, labels in train_loader:
+        for inputs, _ , labels in train_loader:
             inputs, labels = inputs.to(DEVICE), labels.to(DEVICE)
 
             optimizer.zero_grad()
@@ -81,7 +82,7 @@ def train_one_fold(model, train_loader, val_loader, epochs=EPOCHS):
         val_running_loss, val_correct, val_total = 0.0, 0, 0
 
         with torch.no_grad():
-            for inputs, labels in val_loader:
+            for inputs, _ , labels in val_loader:
                 inputs, labels = inputs.to(DEVICE), labels.to(DEVICE)
                 outputs = model(inputs)
                 loss = criterion(outputs, labels)
@@ -103,7 +104,7 @@ def train_one_fold(model, train_loader, val_loader, epochs=EPOCHS):
             metrics["best_val_accuracy"] = val_acc
             metrics["best_train_loss"] = train_loss
             metrics["best_train_accuracy"] = train_acc
-            best_model_state = model.state_dict()
+            best_model_state = copy.deepcopy(model.state_dict())
 
         print(
             f"Época {epoch+1}/{epochs} | "
@@ -171,7 +172,7 @@ def run_kfold(dataset_path, dataset_type, class_names, dataset_nome, backbone="m
             best_val_loss_global = metrics["best_val_loss"]
             best_model_state = best_model_fold_state
 
-            out_dir = f"../outputs/models/{dataset_nome}/{seed}"
+            out_dir = f"outputs/models/{dataset_nome}/{seed}"
             os.makedirs(out_dir, exist_ok=True)
             nome_modelo = f"{out_dir}/{backbone}_{dataset_type}.pth"
             torch.save(best_model_state, nome_modelo)
@@ -193,7 +194,7 @@ def run_kfold(dataset_path, dataset_type, class_names, dataset_nome, backbone="m
         torch.cuda.empty_cache()
 
     # ================= SALVAR RESULTADOS =================
-    base_path = f"../outputs/results_kfold/{dataset_nome}/{seed}/{dataset_type}/{backbone}" 
+    base_path = f"outputs/results_kfold/{dataset_nome}/{seed}/{dataset_type}/{backbone}" 
     os.makedirs(base_path, exist_ok=True)
 
     # métricas finais por fold
@@ -259,7 +260,7 @@ def train_seeds(seeds, dataset_path, classes,  dataset_nome, backbones=None, ski
             for dataset_type, chave in [("F-RecPlot", chave_rec),
                                          ("originais",  chave_orig)]:
  
-                pth = f"../outputs/models/{dataset_nome}/{seed}/{backbone}_{dataset_type}.pth"
+                pth = f"outputs/models/{dataset_nome}/{seed}/{backbone}_{dataset_type}.pth"
  
                 if skip_existing and os.path.exists(pth):
                     print(f"\n[SKIP] {backbone} / {dataset_type} / seed {seed} "
