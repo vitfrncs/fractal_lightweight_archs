@@ -6,7 +6,7 @@ from efficiency import tabela_eficiencia
 from utils import *
 from dataset import *
 from train import *
-from model import *
+from model import carregar_modelo
 
 import torch
 from torch.utils.data import DataLoader
@@ -15,21 +15,26 @@ import sys, os
 sys.path.insert(0, os.path.dirname(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-N_GRADCAM = 30
-
-DATASETS = [
-    {
+"""    {
         "nome":         "displasia",
-        "dataset_path": "../../../datasets/dataset_displasia/treino_e_validacao",
-        "test_dir":     "../../../datasets/dataset_displasia/teste",
+        "dataset_path": "../datasets/dataset_displasia/treino_e_validacao",
+        "test_dir":     "../datasets/dataset_displasia/teste",
         "classes":      ["healthy", "severe"],
     },
-#    {
-#        "nome":         "pulmao",
-#        "dataset_path": "../../../datasets/dataset_pulmao/treino_e_validacao",
-#        "test_dir":     "../../../datasets/dataset_pulmao/teste",
-#        "classes":      ["aca_md", "nor", "scc_md"],
-#    },
+    {
+        "nome":         "pulmao",
+        "dataset_path": "dataset_pulmao\treino_e_validacao",
+        "test_dir":     "dataset_pulmao\teste",
+        "classes":      ["aca_md", "nor", "scc_md"],
+    },
+"""
+DATASETS = [
+    {
+        "nome":         "oral-cancer",
+        "dataset_path": "dataset-oral-cancer/treino_e_validacao",
+        "test_dir":     "dataset-oral-cancer/teste",
+        "classes":      ["Normal", "OSCC"],
+    },
 ]
 
 
@@ -44,11 +49,11 @@ for ds in DATASETS:
     print(f"  DATASET: {nome.upper()}  |  classes: {classes}")
     print(f"{'='*60}")
 
-    csv_path   = f"../outputs/{nome}/resultados_testes.csv"
-    plots_dir  = f"../outputs/{nome}/plots"
-    logits_dir = f"../outputs/{nome}/logits"
-    gradcam_dir= f"../outputs/{nome}/gradcam"
-    efic_path  = f"../outputs/{nome}/eficiencia.csv"
+    csv_path   = f"outputs/{nome}/resultados_testes.csv"
+    plots_dir  = f"outputs/{nome}/plots"
+    logits_dir = f"outputs/{nome}/logits"
+    gradcam_dir= f"outputs/{nome}/gradcam"
+    efic_path  = f"outputs/{nome}/eficiencia.csv"
 
     test_dataset = EnsembleTestDataset(TEST_DIR, classes, transform=transform)
     test_loader  = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False)
@@ -60,20 +65,21 @@ for ds in DATASETS:
         dataset_path = dataset_path,
         classes      = classes,
         dataset_nome = nome,
-        backbones    = ["ghostnet"],
+        backbones    = ["mobilenet", "efficientnet_b0", "ghostnet", "convnextv2"],
         skip_existing= True,
     )
 
     # === CARREGAR TODOS OS MODELOS ===
     for seed in SEEDS:
-        # caminhos agora incluem nome do dataset
-        base = f"../outputs/models/{nome}/{seed}"
+        base = f"outputs/models/{nome}/{seed}"
         results[seed]["mobnet_orig"]      = carregar_modelo("mobilenet",       num_classes, f"{base}/mobilenet_originais.pth")
         results[seed]["mobnet_recplot"]   = carregar_modelo("mobilenet",       num_classes, f"{base}/mobilenet_F-RecPlot.pth")
         results[seed]["effnet_orig"]      = carregar_modelo("efficientnet_b0", num_classes, f"{base}/efficientnet_b0_originais.pth")
         results[seed]["effnet_recplot"]   = carregar_modelo("efficientnet_b0", num_classes, f"{base}/efficientnet_b0_F-RecPlot.pth")
         results[seed]["ghostnet_orig"]    = carregar_modelo("ghostnet",        num_classes, f"{base}/ghostnet_originais.pth")
         results[seed]["ghostnet_recplot"] = carregar_modelo("ghostnet",        num_classes, f"{base}/ghostnet_F-RecPlot.pth")
+        results[seed]["convnext_orig"]    = carregar_modelo("convnextv2",      num_classes, f"{base}/convnextv2_originais.pth")
+        results[seed]["convnext_recplot"] = carregar_modelo("convnextv2",      num_classes, f"{base}/convnextv2_F-RecPlot.pth")
 
     # === MÉTRICAS DE TESTE + MATRIZES DE CONFUSÃO ===
     metrics_to_csv(
@@ -95,47 +101,40 @@ for ds in DATASETS:
     )
 
     # === GRAD-CAM ===
-        # === GRAD-CAM ===
     seed_ref = SEEDS[0]
  
     for chave_orig, chave_rec, backbone in [
-        # ("mobnet_orig",   "mobnet_recplot",   "mobilenet"),
-        # ("effnet_orig",   "effnet_recplot",   "efficientnet_b0"),
+        ("mobnet_orig", "mobnet_recplot", "mobnet"),
+        ("effnet_orig", "effnet_recplot", "effnet"),
         ("ghostnet_orig", "ghostnet_recplot", "ghostnet"),
+        ("convnext_orig", "convnext_recplot", "convnextv2"), 
     ]:
         model_orig = results[seed_ref].get(chave_orig)
         model_rec  = results[seed_ref].get(chave_rec)
  
         if model_orig is None:
-            print(f"[SKIP Grad-CAM] {backbone}_orig não disponível para {nome}")
+            print(f"[SKIP Grad-CAM] {backbone}_orig não disponível")
             continue
  
-        # --- individual (só original) ---
         gerar_gradcam_lote(
             model        = model_orig,
             backbone     = backbone,
             loader       = test_loader,
             class_names  = classes,
             split        = "test",
-            n_por_classe = N_GRADCAM,
             base_dir     = gradcam_dir,
         )
  
-        # --- comparação original vs recplot (só se recplot disponível) ---
-        if model_rec is None:
-            print(f"[SKIP Grad-CAM comparação] {backbone}_rec não disponível para {nome}")
-            continue
- 
-        gerar_gradcam_comparacao(
-            model_orig   = model_orig,
-            model_rec    = model_rec,
-            backbone     = backbone,
-            loader       = test_loader,
-            class_names  = classes,
-            split        = "test",
-            n_por_classe = N_GRADCAM,
-            base_dir     = gradcam_dir,
-        )
+        if model_rec is not None:
+            gerar_gradcam_comparacao(
+                model_orig   = model_orig,
+                model_rec    = model_rec,
+                backbone     = backbone,
+                loader       = test_loader,
+                class_names  = classes,
+                split        = "test",
+                base_dir     = gradcam_dir,
+            )
 
 
     # === EFICIÊNCIA COMPUTACIONAL ===
@@ -145,6 +144,7 @@ for ds in DATASETS:
             ("mobilenet",       "mobnet_orig"),
             ("efficientnet_b0", "effnet_orig"),
             ("ghostnet",        "ghostnet_orig"),
+            ("convnext",        "convnext_orig"),
         ]
         if results[seed_ref].get(chave) is not None
     }
@@ -152,4 +152,4 @@ for ds in DATASETS:
     if modelos_efic:
         tabela_eficiencia(modelos=modelos_efic, csv_path=efic_path)
     else:
-        print(f"[SKIP Eficiência] Nenhum modelo disponível para {nome}")
+        print(f" Nenhum modelo disponível para {nome}")
