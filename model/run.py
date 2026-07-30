@@ -1,5 +1,6 @@
 from dataset import EnsembleTestDataset
 from metrics import metrics_to_csv
+from validation_ensemble import avaliar_cenarios_validacao, escolher_melhor_cenario
 from save_outputs import salvar_saidas_todos
 from gradcam import *
 from efficiency import tabela_eficiencia
@@ -81,21 +82,31 @@ for ds in DATASETS:
         results[seed]["convnext_orig"]    = carregar_modelo("convnextv2",      num_classes, f"{base}/convnextv2_originais.pth")
         results[seed]["convnext_recplot"] = carregar_modelo("convnextv2",      num_classes, f"{base}/convnextv2_F-RecPlot.pth")
 
-    # === MÉTRICAS DE TESTE + MATRIZES DE CONFUSÃO ===
+    # === SELEÇÃO DE MODELO/ENSEMBLE NA VALIDAÇÃO (OOF) ===
+    df_validacao = avaliar_cenarios_validacao(
+        seeds        = SEEDS,
+        dataset_nome = nome,
+        class_names  = classes,
+    )
+    cenario_vencedor, ranking_validacao = escolher_melhor_cenario(df_validacao)
+    ranking_validacao.to_csv(f"outputs/{nome}/ranking_validacao_oof.csv")
+
+    # === MÉTRICAS DE TESTE+ MATRIZES DE CONFUSÃO ===
+    # cenarios_permitidos garante que o teste é usado uma única vez
     metrics_to_csv(
-        seeds       = SEEDS,
-        results     = results,
-        test_loader = test_loader,
-        class_names = classes,
-        csv_path    = csv_path,
-        plots_dir   = plots_dir,
+        seeds               = SEEDS,
+        results             = results,
+        test_loader         = test_loader,
+        class_names         = classes,
+        csv_path            = csv_path,
+        plots_dir           = plots_dir,
+        cenarios_permitidos = [cenario_vencedor],
     )
 
     # === SALVAR LOGITS E PROBABILIDADES ===
     salvar_saidas_todos(
         seeds       = SEEDS,
         results     = results,
-        val_loaders = {},
         test_loader = test_loader,
         base_dir    = logits_dir,
     )
