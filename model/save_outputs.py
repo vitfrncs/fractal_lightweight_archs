@@ -49,9 +49,15 @@ def salvar_saidas(model, loader, seed, backbone: str, dataset_type, split="val",
     print(f"Saídas salvas em {save_path}")
 
 
-def salvar_saidas_todos(seeds, results, val_loaders, test_loader,
+def salvar_saidas_todos(seeds, results, test_loader,
                         base_dir="outputs/logits"):
-    """Salva logits/probs de validação e teste para todos os modelos.
+    """Salva logits/probs de TESTE para todos os modelos finais.
+
+    As predições de validação (out-of-fold) são salvas separadamente
+    durante o K-Fold, em train.py/run_kfold — ver validation_ensemble.py.
+    Essa função não recebe mais val_loaders porque, após o retreino final
+    com 100% dos dados (treino+val), não existe um val_loader isolado por
+    modelo a ser avaliado aqui.
 
     As chaves usadas aqui precisam bater com as chaves preenchidas em
     `results[seed][...]` por train.py/run.py — ver BACKBONE_REGISTRO em
@@ -75,15 +81,6 @@ def salvar_saidas_todos(seeds, results, val_loaders, test_loader,
                 print(f"Modelo {chave} seed {seed} não encontrado, pulando.")
                 continue
 
-            # validação
-            if seed in val_loaders and (backbone, dataset_type) in val_loaders[seed]:
-                salvar_saidas(
-                    model, val_loaders[seed][(backbone, dataset_type)],
-                    seed, backbone, dataset_type, split="val",
-                    base_dir=base_dir,
-                )
-
-            # teste
             salvar_saidas(
                 model, test_loader,
                 seed, backbone, dataset_type, split="test",
