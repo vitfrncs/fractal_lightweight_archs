@@ -120,7 +120,8 @@ def _add_label(img_array: np.ndarray, text: str, font_size: int = 14) -> Image.I
 def _make_comparison(
     orig_tensor, rec_tensor,
     wrapper_orig, wrapper_rec,
-    label: int,
+    label_orig: int,
+    label_rec: int,
 ) -> Image.Image:
     """
     Monta uma imagem comparativa com 4 painéis:
@@ -129,8 +130,8 @@ def _make_comparison(
     orig_rgb = (_tensor_to_rgb(orig_tensor) * 255).astype(np.uint8)
     rec_rgb  = (_tensor_to_rgb(rec_tensor)  * 255).astype(np.uint8)
 
-    cam_orig = wrapper_orig.get_cam_overlay(orig_tensor, label)
-    cam_rec  = wrapper_rec.get_cam_overlay(rec_tensor,  label)
+    cam_orig = wrapper_orig.get_cam_overlay(orig_tensor, label_orig)
+    cam_rec  = wrapper_rec.get_cam_overlay(rec_tensor,  label_rec)
 
     panels = [
         _add_label(orig_rgb,  "Original"),
@@ -163,9 +164,11 @@ def gerar_gradcam_lote(
     base_dir: str = "../outputs/gradcam",
 ):
     """Gera mapas Grad-CAM individuais para ABSOLUTAMENTE TODAS as imagens do loader."""
-    wrapper    = GradCAMWrapper(model)
-    contagem   = {i: 0 for i in range(len(class_names))}
-    gerados    = 0
+    wrapper  = GradCAMWrapper(model)
+    contagem = {i: 0 for i in range(len(class_names))}
+    gerados  = 0
+    acertos  = 0
+    erros    = 0
 
     for batch in loader:
         if len(batch) == 3:
@@ -173,19 +176,43 @@ def gerar_gradcam_lote(
         else:
             imgs, labels = batch
 
+        imgs_dev = imgs.to(DEVICE)
+        with torch.no_grad():
+            outputs = wrapper.model(imgs_dev)
+            preds   = outputs.argmax(dim=1)
+
         for i in range(imgs.size(0)):
-            lbl = int(labels[i].item())
+            lbl_real = int(labels[i].item())
+            lbl_pred = int(preds[i].item())
+            correto  = lbl_real == lbl_pred
+            subdir   = "correct" if correto else "incorrect"
 
-            idx   = contagem[lbl]
-            fname = f"{class_names[lbl]}_{idx:03d}.png"
-            path  = os.path.join(base_dir, backbone, split, class_names[lbl], fname)
+            idx = contagem[lbl_real]
 
-            wrapper.generate(img_tensor=imgs[i], label=lbl, save_path=path)
+            fname_pred = f"{class_names[lbl_real]}_{idx:03d}_pred-{class_names[lbl_pred]}.png"
+            path_pred  = os.path.join(
+                base_dir, backbone, split, subdir, class_names[lbl_real], fname_pred
+            )
+            wrapper.generate(img_tensor=imgs[i], label=lbl_pred, save_path=path_pred)
+            gerados += 1
 
-            contagem[lbl] += 1
-            gerados        += 1
+            if not correto:
+                fname_true = f"{class_names[lbl_real]}_{idx:03d}_true-{class_names[lbl_real]}.png"
+                path_true  = os.path.join(
+                    base_dir, backbone, split, subdir, class_names[lbl_real], fname_true
+                )
+                wrapper.generate(img_tensor=imgs[i], label=lbl_real, save_path=path_true)
+                gerados += 1
+                erros += 1
+            else:
+                acertos += 1
 
-    print(f"Grad-CAM individual completo: {gerados} imagens salvas em {base_dir}/{backbone}/{split}/")
+            contagem[lbl_real] += 1
+
+    print(
+        f"Grad-CAM individual completo: {gerados} imagens salvas em "
+        f"{base_dir}/{backbone}/{split}/ ({acertos} acertos, {erros} erros)"
+    )
 
 
 
@@ -205,21 +232,33 @@ def gerar_gradcam_comparacao(
     wrapper_orig = GradCAMWrapper(model_orig)
     wrapper_rec  = GradCAMWrapper(model_rec)
 
-    contagem   = {i: 0 for i in range(len(class_names))}
-    gerados    = 0
+    contagem = {i: 0 for i in range(len(class_names))}
+    gerados  = 0
 
     for batch in loader:
         if len(batch) != 3:
             raise ValueError("Requer EnsembleTestDataset (batch com 3 itens: orig, rec, label).")
 
         imgs_orig, imgs_rec, labels = batch
+        imgs_orig_dev = imgs_orig.to(DEVICE)
+        imgs_rec_dev  = imgs_rec.to(DEVICE)
+
+        with torch.no_grad():
+            preds_orig = wrapper_orig.model(imgs_orig_dev).argmax(dim=1)
+            preds_rec  = wrapper_rec.model(imgs_rec_dev).argmax(dim=1)
 
         for i in range(imgs_orig.size(0)):
-            lbl = int(labels[i].item())
+            lbl_real      = int(labels[i].item())
+            lbl_pred_orig = int(preds_orig[i].item())
+            lbl_pred_rec  = int(preds_rec[i].item())
 
-            idx   = contagem[lbl]
-            fname = f"{class_names[lbl]}_{idx:03d}.png"
-            path  = os.path.join(base_dir, f"{backbone}_comparacao", split, class_names[lbl], fname)
+            idx = contagem[lbl_real]
+            fname = (
+                f"{class_names[lbl_real]}_{idx:03d}"
+                f"_predOrig-{class_names[lbl_pred_orig]}"
+                f"_predRec-{class_names[lbl_pred_rec]}.png"
+            )
+            path = os.path.join(base_dir, f"{backbone}_comparacao", split, class_names[lbl_real], fname)
             os.makedirs(os.path.dirname(path), exist_ok=True)
 
             comparison = _make_comparison(
@@ -227,12 +266,13 @@ def gerar_gradcam_comparacao(
                 rec_tensor   = imgs_rec[i],
                 wrapper_orig = wrapper_orig,
                 wrapper_rec  = wrapper_rec,
-                label        = lbl,
+                label_orig   = lbl_pred_orig,
+                label_rec    = lbl_pred_rec,
             )
             comparison.save(path)
 
-            contagem[lbl] += 1
-            gerados        += 1
+            contagem[lbl_real] += 1
+            gerados += 1
 
     out_dir = os.path.join(base_dir, f"{backbone}_comparacao", split)
     print(f"Grad-CAM comparação completa: {gerados} imagens salvas em {out_dir}/")
